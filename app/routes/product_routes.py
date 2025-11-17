@@ -4,21 +4,23 @@ from bson import ObjectId
 
 router = APIRouter()
 
+
 # -------------------------------------------------
 # ADD PRODUCT
 # -------------------------------------------------
 @router.post("/products/")
 async def add_product(product: dict):
 
-    # Convert uid → userId
+    # Convert uid → userId (if frontend sends uid)
     if "uid" in product:
         product["userId"] = product["uid"]
         del product["uid"]
 
+    # User validation
     if "userId" not in product or not product["userId"]:
         raise HTTPException(status_code=400, detail="userId missing")
 
-    # Convert numeric values
+    # Convert number fields
     try:
         product["purchasePrice"] = float(product["purchasePrice"])
         product["sellingPrice"] = float(product["sellingPrice"])
@@ -28,11 +30,22 @@ async def add_product(product: dict):
 
     try:
         result = await products_collection.insert_one(product)
-        return { "id": str(result.inserted_id), **product }
+
+        return {
+            "id": str(result.inserted_id),
+            "name": product["name"],
+            "category": product["category"],
+            "supplier": product["supplier"],
+            "purchasePrice": product["purchasePrice"],
+            "sellingPrice": product["sellingPrice"],
+            "stock": product["stock"],
+            "userId": product["userId"],
+        }
 
     except Exception as e:
         print("❌ Add Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # -------------------------------------------------
@@ -40,14 +53,22 @@ async def add_product(product: dict):
 # -------------------------------------------------
 @router.get("/products/user/{userId}")
 async def get_all_products(userId: str):
+
     try:
         products = []
         cursor = products_collection.find({"userId": userId})
 
-        async for product in cursor:
-            product["id"] = str(product["_id"])
-            del product["_id"]
-            products.append(product)
+        async for doc in cursor:
+            products.append({
+                "id": str(doc["_id"]),
+                "name": doc["name"],
+                "category": doc["category"],
+                "supplier": doc["supplier"],
+                "purchasePrice": doc["purchasePrice"],
+                "sellingPrice": doc["sellingPrice"],
+                "stock": doc["stock"],
+                "userId": doc["userId"]
+            })
 
         return products
 
@@ -56,28 +77,37 @@ async def get_all_products(userId: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 # -------------------------------------------------
-# GET SINGLE PRODUCT
+# GET ONE PRODUCT FOR EDIT PAGE
 # -------------------------------------------------
 @router.get("/products/{id}/{userId}")
 async def get_product(id: str, userId: str):
 
     try:
-        product = await products_collection.find_one({"_id": ObjectId(id)})
+        doc = await products_collection.find_one({"_id": ObjectId(id)})
 
-        if not product:
+        if not doc:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        if product["userId"] != userId:
+        if doc["userId"] != userId:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        product["id"] = str(product["_id"])
-        del product["_id"]
-        return product
+        return {
+            "id": str(doc["_id"]),
+            "name": doc["name"],
+            "category": doc["category"],
+            "supplier": doc["supplier"],
+            "purchasePrice": doc["purchasePrice"],
+            "sellingPrice": doc["sellingPrice"],
+            "stock": doc["stock"],
+            "userId": doc["userId"],
+        }
 
     except Exception as e:
         print("❌ Get Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # -------------------------------------------------
@@ -95,12 +125,12 @@ async def update_product(id: str, userId: str, product: dict):
         if existing["userId"] != userId:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # Convert uid → userId if sent
+        # Convert uid → userId if frontend sends uid
         if "uid" in product:
             product["userId"] = product["uid"]
             del product["uid"]
 
-        # Convert numeric fields
+        # Convert only fields that exist
         try:
             if "purchasePrice" in product:
                 product["purchasePrice"] = float(product["purchasePrice"])
@@ -109,7 +139,7 @@ async def update_product(id: str, userId: str, product: dict):
             if "stock" in product:
                 product["stock"] = int(product["stock"])
         except:
-            raise HTTPException(status_code=400, detail="Invalid data format")
+            raise HTTPException(status_code=400, detail="Invalid number format")
 
         await products_collection.update_one(
             {"_id": ObjectId(id)},
@@ -123,6 +153,7 @@ async def update_product(id: str, userId: str, product: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 # -------------------------------------------------
 # DELETE PRODUCT
 # -------------------------------------------------
@@ -130,12 +161,12 @@ async def update_product(id: str, userId: str, product: dict):
 async def delete_product(id: str, userId: str):
 
     try:
-        product = await products_collection.find_one({"_id": ObjectId(id)})
+        doc = await products_collection.find_one({"_id": ObjectId(id)})
 
-        if not product:
+        if not doc:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        if product["userId"] != userId:
+        if doc["userId"] != userId:
             raise HTTPException(status_code=403, detail="Access denied")
 
         await products_collection.delete_one({"_id": ObjectId(id)})

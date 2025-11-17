@@ -1,97 +1,147 @@
 from fastapi import APIRouter, HTTPException
-from app.schemas import Product
-from app.database import products_collection, users_collection
+from app.database import products_collection
 from bson import ObjectId
+
 router = APIRouter()
+
+# -------------------------------------------------
+# ADD PRODUCT
+# -------------------------------------------------
 @router.post("/products/")
-async def add_product(product: Product):
+async def add_product(product: dict):
+
+    # Convert uid → userId
+    if "uid" in product:
+        product["userId"] = product["uid"]
+        del product["uid"]
+
+    if "userId" not in product or not product["userId"]:
+        raise HTTPException(status_code=400, detail="userId missing")
+
+    # Convert numeric values
     try:
-        product_dict = product.dict()
-        result = await products_collection.insert_one(product_dict)
-        return {
-            "id": str(result.inserted_id),
-            "name": product.name,
-            "category": product.category,
-            "supplier": product.supplier,
-            "purchasePrice": product.purchasePrice,
-            "sellingPrice": product.sellingPrice,
-            "stock": product.stock,
-        }
+        product["purchasePrice"] = float(product["purchasePrice"])
+        product["sellingPrice"] = float(product["sellingPrice"])
+        product["stock"] = int(product["stock"])
+    except:
+        raise HTTPException(status_code=400, detail="Invalid number format")
+
+    try:
+        result = await products_collection.insert_one(product)
+        return { "id": str(result.inserted_id), **product }
+
     except Exception as e:
-        print("🔥 FULL ERROR BELOW 🔥")
-        import traceback
-        traceback.print_exc()
         print("❌ Add Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-@router.get("/products/")
-async def get_all_products():
+
+
+# -------------------------------------------------
+# GET ALL PRODUCTS FOR ONE USER
+# -------------------------------------------------
+@router.get("/products/user/{userId}")
+async def get_all_products(userId: str):
     try:
         products = []
-        cursor = products_collection.find({})
+        cursor = products_collection.find({"userId": userId})
+
         async for product in cursor:
-            products.append({
-                "id": str(product["_id"]),
-                "name": product["name"],
-                "category": product["category"],
-                "supplier": product["supplier"],
-                "purchasePrice": product["purchasePrice"],
-                "sellingPrice": product["sellingPrice"],
-                "stock": product["stock"],
-            })
+            product["id"] = str(product["_id"])
+            del product["_id"]
+            products.append(product)
+
         return products
 
     except Exception as e:
         print("❌ Get Products Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-@router.get("/products/{id}")
-async def get_product(id: str):
+
+
+# -------------------------------------------------
+# GET SINGLE PRODUCT
+# -------------------------------------------------
+@router.get("/products/{id}/{userId}")
+async def get_product(id: str, userId: str):
+
     try:
         product = await products_collection.find_one({"_id": ObjectId(id)})
 
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        return {
-            "id": str(product["_id"]),
-            "name": product["name"],
-            "category": product["category"],
-            "supplier": product["supplier"],
-            "purchasePrice": product["purchasePrice"],
-            "sellingPrice": product["sellingPrice"],
-            "stock": product["stock"],
-        }
+        if product["userId"] != userId:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        product["id"] = str(product["_id"])
+        del product["_id"]
+        return product
+
     except Exception as e:
         print("❌ Get Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-@router.put("/products/{id}")
-async def update_product(id: str, product: Product):
+
+
+# -------------------------------------------------
+# UPDATE PRODUCT
+# -------------------------------------------------
+@router.put("/products/{id}/{userId}")
+async def update_product(id: str, userId: str, product: dict):
+
     try:
-        result = await products_collection.update_one(
-            {"_id": ObjectId(id)},
-            {"$set": product.dict()}
-        )
-        if result.matched_count == 0:
+        existing = await products_collection.find_one({"_id": ObjectId(id)})
+
+        if not existing:
             raise HTTPException(status_code=404, detail="Product not found")
+
+        if existing["userId"] != userId:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Convert uid → userId if sent
+        if "uid" in product:
+            product["userId"] = product["uid"]
+            del product["uid"]
+
+        # Convert numeric fields
+        try:
+            if "purchasePrice" in product:
+                product["purchasePrice"] = float(product["purchasePrice"])
+            if "sellingPrice" in product:
+                product["sellingPrice"] = float(product["sellingPrice"])
+            if "stock" in product:
+                product["stock"] = int(product["stock"])
+        except:
+            raise HTTPException(status_code=400, detail="Invalid data format")
+
+        await products_collection.update_one(
+            {"_id": ObjectId(id)},
+            {"$set": product}
+        )
+
         return {"message": "Product updated successfully"}
+
     except Exception as e:
         print("❌ Update Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-@router.delete("/products/{id}")
-async def delete_product(id: str):
-    try:
-        result = await products_collection.delete_one({"_id": ObjectId(id)})
 
-        if result.deleted_count == 1:
-            return {"message": "Product deleted successfully"}
-        else:
+
+# -------------------------------------------------
+# DELETE PRODUCT
+# -------------------------------------------------
+@router.delete("/products/{id}/{userId}")
+async def delete_product(id: str, userId: str):
+
+    try:
+        product = await products_collection.find_one({"_id": ObjectId(id)})
+
+        if not product:
             raise HTTPException(status_code=404, detail="Product not found")
+
+        if product["userId"] != userId:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        await products_collection.delete_one({"_id": ObjectId(id)})
+
+        return {"message": "Product deleted successfully"}
 
     except Exception as e:
         print("❌ Delete Product Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-async def test_db():
-    try:
-        await products_collection.find_one({})
-        return {"message": "🟢 MongoDB connection OK"}
-    except Exception as e:
-        return {"message": "🔴 MongoDB connection FAILED", "error": str(e)}
